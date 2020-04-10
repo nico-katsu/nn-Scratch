@@ -8,7 +8,10 @@ try:
     train_image_path, train_label_path, test_image_path = sys.argv[1:4]
 except:
     train_image_path, train_label_path, test_image_path = 'train_image.csv', 'train_label.csv', 'test_image.csv'
-drop_probability = 0
+
+drop_probability = 0.2
+beta_1, beta_2 = 0.9, 0.99
+b_size = 128
 
 
 def Relu(x, prime=False):
@@ -53,6 +56,9 @@ class NeuralNetwork:
         self.Ws.append(
             np.random.normal(loc=0, scale=sqrt(2 / (layers[0] + layers[-1])), size=(layers[-2] + 1, layers[-1])))
         self.activations = activations
+        self.M = [0] * len(self.Ws)
+        self.V = [0] * len(self.Ws)
+        self.beta_1_t, self.beta_2_t = 1, 1
 
     def fit(self, X: np.ndarray, y, alpha, n_epoch):
         global drop_probability
@@ -60,26 +66,36 @@ class NeuralNetwork:
         X = (X - X.mean()) / X.std()
         Y = np.eye(10)[y]
         s = 0
+        update = [0] * len(self.Ws)
         for epoch in range(n_epoch):
-            r = np.random.randint(X.shape[0], size=1)
+            r = np.random.randint(X.shape[0], size=b_size)
             a = [dropout(X[r])]
             for i in range(len(self.Ws) - 1):
                 a.append(dropout(self.activations[i](np.dot(a[i], self.Ws[i]))))
             a.append(self.activations[-1](np.dot(a[-1], self.Ws[-1])))
             delta = Y[r] - a[-1]
-            s += np.sum(np.argmax(a[-1]) == np.argmax(Y[r]))
+            s += np.sum(np.argmax(a[-1], axis=1) == np.argmax(Y[r], axis=1))
             deltas = [delta]
             for i in range(len(a) - 2, 0, -1):
-                deltas.append(deltas[-1].dot(self.Ws[i].T) * self.activations[i - 1](a[i], prime=True))
+                deltas.append(deltas[-1].dot(
+                    (self.Ws[i] + alpha * sqrt(1 - self.beta_2_t) / (1 - self.beta_1_t + 1e-8) * update[i]).T) *
+                              self.activations[i - 1](a[i], prime=True))
             deltas.reverse()
+            self.beta_1_t *= beta_1
+            self.beta_2_t *= beta_2
             for i in range(len(self.Ws)):
-                self.Ws[i] += alpha * np.dot(np.atleast_2d(a[i]).T, np.atleast_2d(deltas[i]))
+                G = np.dot(np.atleast_2d(a[i]).T, np.atleast_2d(deltas[i]))
+                self.M[i] = self.M[i] * beta_1 + (1 - beta_1) * G
+                self.V[i] = self.V[i] * beta_2 + (1 - beta_2) * (G ** 2)
+                M_corrected = self.M[i] / (1 - self.beta_1_t)
+                V_corrected = self.V[i] / (1 - self.beta_2_t)
+                update[i] = (M_corrected / (np.sqrt(V_corrected) + 1e-8))
+                self.Ws[i] += alpha * sqrt(1 - self.beta_2_t) / (1 - self.beta_1_t) * update[i]
+            #     self.Ws[i] += alpha * np.dot(np.atleast_2d(a[i]).T, np.atleast_2d(deltas[i]))
+
             if epoch % 1000 == 0:
-                acc = s / 1000
-                print(acc)
-                if acc > 0.90:
-                    drop_probability = 0.2
-                    alpha = 0.002
+                acc = s / (1000 * b_size)
+                print(acc, s)
                 s = 0
 
     def predict(self, X):
@@ -101,7 +117,7 @@ if __name__ == '__main__':
         # train_y = train_y[sample_i]
 
         nn = NeuralNetwork([784, 128, 256, 64, 32, 10], [Relu] * 4 + [Softmax])
-        nn.fit(train_X, train_y, 0.001, 150000)
+        nn.fit(train_X, train_y, 0.001, 10000)
         pred_y = nn.predict(test_X)
         csv.writer(open('test_predictions.csv', 'w')).writerows(pred_y.reshape((-1, 1)))
         try:
