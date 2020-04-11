@@ -57,6 +57,7 @@ class NeuralNetwork:
             np.random.normal(loc=0, scale=sqrt(2 / (layers[0] + layers[-1])), size=(layers[-2] + 1, layers[-1])))
         self.activations = activations
         self.M = [0] * len(self.Ws)
+        self.M_corrected = [0] * len(self.Ws)
         self.V = [0] * len(self.Ws)
         self.beta_1_t, self.beta_2_t = 1, 1
 
@@ -66,7 +67,6 @@ class NeuralNetwork:
         X = (X - X.mean()) / X.std()
         Y = np.eye(10)[y]
         s = 0
-        update = [0] * len(self.Ws)
         for epoch in range(n_epoch):
             r = np.random.randint(X.shape[0], size=b_size)
             a = [dropout(X[r])]
@@ -77,22 +77,21 @@ class NeuralNetwork:
             s += np.sum(np.argmax(a[-1], axis=1) == np.argmax(Y[r], axis=1))
             deltas = [delta]
             for i in range(len(a) - 2, 0, -1):
-                deltas.append(deltas[-1].dot(
-                    (self.Ws[i] + alpha * sqrt(1 - self.beta_2_t) / (1 - self.beta_1_t + 1e-8) * update[i]).T) *
-                              self.activations[i - 1](a[i], prime=True))
+                deltas.append(deltas[-1].dot(self.Ws[i].T) * self.activations[i - 1](a[i], prime=True))
             deltas.reverse()
             self.beta_1_t *= beta_1
             self.beta_2_t *= beta_2
             for i in range(len(self.Ws)):
                 G = np.dot(np.atleast_2d(a[i]).T, np.atleast_2d(deltas[i]))
-                self.M[i] = self.M[i] * beta_1 + (1 - beta_1) * G
                 self.V[i] = self.V[i] * beta_2 + (1 - beta_2) * (G ** 2)
-                M_corrected = self.M[i] / (1 - self.beta_1_t)
                 V_corrected = self.V[i] / (1 - self.beta_2_t)
-                update[i] = (M_corrected / (np.sqrt(V_corrected) + 1e-8))
-                self.Ws[i] += alpha * sqrt(1 - self.beta_2_t) / (1 - self.beta_1_t) * update[i]
+                self.Ws[i] += alpha * (beta_1 * self.M_corrected[i] + (1 - beta_1) * G / (1 - self.beta_1_t)) / (
+                        np.sqrt(V_corrected) + 1e-8)
+                self.M[i] = self.M[i] * beta_1 + (1 - beta_1) * G
+                self.M_corrected[i] = self.M[i] / (1 - self.beta_1_t)
             #     self.Ws[i] += alpha * np.dot(np.atleast_2d(a[i]).T, np.atleast_2d(deltas[i]))
 
+            if n_epoch - epoch <= 1500: alpha = 0.0001
             if epoch % 1000 == 0:
                 acc = s / (1000 * b_size)
                 print(acc, s)
